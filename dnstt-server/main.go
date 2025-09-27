@@ -164,7 +164,7 @@ func (tc *TCPConn) SetWriteDeadline(t time.Time) error {
 	return tc.conn.SetWriteDeadline(t)
 }
 
-func handleTCPConnection(domain dns.Name, conn net.Conn, upstream string) {
+func handleTCPConnection(domain dns.Name, conn net.Conn, upstream string, privkey []byte) {
 	defer conn.Close()
 	
 	tcpConn := &TCPConn{
@@ -173,17 +173,17 @@ func handleTCPConnection(domain dns.Name, conn net.Conn, upstream string) {
 	}
 	
 	// Use existing server logic with TCP wrapper
-	server(domain, tcpConn, upstream)
+	server(domain, tcpConn, upstream, privkey)
 }
 
-func tcpServer(domain dns.Name, listener net.Listener, upstream string) error {
+func tcpServer(domain dns.Name, listener net.Listener, upstream string, privkey []byte) error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return err
 		}
 		
-		go handleTCPConnection(domain, conn, upstream)
+		go handleTCPConnection(domain, conn, upstream, privkey)
 	}
 }
 
@@ -851,7 +851,7 @@ func computeMaxEncodedPayload(limit int) int {
 	return low
 }
 
-func server(domain dns.Name, dnsConn net.PacketConn, upstream string) error {
+func server(domain dns.Name, dnsConn net.PacketConn, upstream string, privkey []byte) error {
 	defer dnsConn.Close()
 
 	log.Printf("pubkey %x", noise.PubkeyFromPrivkey(privkey))
@@ -1040,7 +1040,7 @@ Example:
 					log.Fatalf("opening UDP listener: %v", err)
 				}
 				log.Printf("UDP server listening on %s", udpAddr)
-				err = server(domain, dnsConn, upstream)
+				err = server(domain, dnsConn, upstream, privkey)
 				if err != nil {
 					log.Printf("UDP server error: %v", err)
 				}
@@ -1058,7 +1058,7 @@ Example:
 				}
 				defer listener.Close()
 				log.Printf("TCP server listening on %s", tcpAddr)
-				err = tcpServer(domain, listener, upstream)
+				err = tcpServer(domain, listener, upstream, privkey)
 				if err != nil {
 					log.Printf("TCP server error: %v", err)
 				}
