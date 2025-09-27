@@ -4,7 +4,7 @@ David Fifield <david@bamsoftware.com>
 Public domain
 
 dnstt is a DNS tunnel with these features:
- * Works over DNS over HTTPS (DoH) and DNS over TLS (DoT) as well as
+ * Works over DNS over HTTPS (DoH), DNS over TLS (DoT), DNS over TCP, as well as
    plaintext UDP DNS.
  * Embeds a sequencing and session protocol (KCP/smux), which means that
    the client does not have to wait for a response before sending more
@@ -22,7 +22,7 @@ tunnel terminate at the proxy.
 ```
 .------.  |            .---------.             .------.
 |tunnel|  |            | public  |             |tunnel|
-|client|<---DoH/DoT--->|recursive|<--UDP DNS-->|server|
+|client|<--DoH/DoT/TCP->|recursive|<--UDP DNS-->|server|
 '------'  |c           |resolver |             '------'
    |      |e           '---------'                |
 .------.  |n                                   .------.
@@ -74,15 +74,17 @@ pubkey  written to server.pub
 ```
 
 Run the server. You need to provide an address that will listen for UDP
-DNS packets (`:5300`), the private key file (`server.key`), the root of
+DNS packets (`-udp :5300`) and/or TCP DNS packets (`-tcp :5300`), the private key file (`server.key`), the root of
 the DNS zone (`t.example.com`), and a TCP address to which incoming
 tunnel streams will be forwarded (`127.0.0.1:8000`).
 ```
 tunnel-server$ ./dnstt-server -udp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+tunnel-server$ ./dnstt-server -tcp :5300 -privkey-file server.key t.example.com 127.0.0.1:8000
+tunnel-server$ ./dnstt-server -udp :53 -tcp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
 ```
 
 The tunnel server needs to be able to receive packets on an external
-port 53. You can have it listen on port 53 directly using `-udp :53`,
+port 53. You can have it listen on port 53 directly using `-udp :53` or `-tcp :53`,
 but that requires the program to run as root. It is better to run the
 program as an ordinary user and have it listen on an unprivileged port
 (`:5300` above), and port-forward port 53 to it. On Linux, use these
@@ -90,8 +92,12 @@ commands to forward external port 53 to localhost port 5300:
 ```
 tunnel-server$ sudo iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 tunnel-server$ sudo iptables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
+tunnel-server$ sudo iptables -I INPUT -p tcp --dport 5300 -j ACCEPT
+tunnel-server$ sudo iptables -t nat -I PREROUTING -i eth0 -p tcp --dport 53 -j REDIRECT --to-ports 5300
 tunnel-server$ sudo ip6tables -I INPUT -p udp --dport 5300 -j ACCEPT
 tunnel-server$ sudo ip6tables -t nat -I PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-ports 5300
+tunnel-server$ sudo ip6tables -I INPUT -p tcp --dport 5300 -j ACCEPT
+tunnel-server$ sudo ip6tables -t nat -I PREROUTING -i eth0 -p tcp --dport 53 -j REDIRECT --to-ports 5300
 ```
 
 You need to also run something for the tunnel server to connect to. It
@@ -135,15 +141,20 @@ For DoT, it's the same, but use the `-dot` option instead:
 tunnel-client$ ./dnstt-client -dot dot.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
 ```
 
+For DNS over TCP, use the `-tcp` option:
+```
+tunnel-client$ ./dnstt-client -tcp tns.example.com:53 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+```
+
 Once the tunnel client is running, you can connect to the local end of
 the tunnel, type something, and see it appear at the remote end.
 ```
 tunnel-client$ ncat -v 127.0.0.1 7000
 ```
 
-The client also has a plaintext UDP mode that can work through a
+The client also has plaintext UDP and TCP modes that can work through a
 recursive resolver or directly to the tunnel server
-(`-udp tns.example.com`), but it does not provide any covertness for the
+(`-udp tns.example.com` or `-tcp tns.example.com`), but they do not provide any covertness for the
 tunnel and should only be used for testing.
 
 
