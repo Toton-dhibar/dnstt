@@ -3,12 +3,14 @@
 // Usage:
 //
 //	dnstt-server -gen-key [-privkey-file PRIVKEYFILE] [-pubkey-file PUBKEYFILE]
-//	dnstt-server -udp ADDR [-privkey PRIVKEY|-privkey-file PRIVKEYFILE] DOMAIN UPSTREAMADDR
+//	dnstt-server [-udp ADDR] [-tcp ADDR] [-privkey PRIVKEY|-privkey-file PRIVKEYFILE] DOMAIN UPSTREAMADDR
 //
 // Example:
 //
 //	dnstt-server -gen-key -privkey-file server.key -pubkey-file server.pub
 //	dnstt-server -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
+//	dnstt-server -tcp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
+//	dnstt-server -udp :53 -tcp :853 -privkey-file server.key t.example.com 127.0.0.1:8000
 //
 // To generate a persistent server private key, first run with the -gen-key
 // option. By default the generated private and public keys are printed to
@@ -24,7 +26,10 @@
 //	-privkey 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 //
 // The -udp option controls the address that will listen for incoming DNS
-// queries.
+// queries over UDP.
+//
+// The -tcp option controls the address that will listen for incoming DNS
+// queries over TCP.
 //
 // The -mtu option controls the maximum size of response UDP payloads.
 // Queries that do not advertise requester support for responses of at least
@@ -100,6 +105,87 @@ var (
 
 // base32Encoding is a base32 encoding without padding.
 var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// TCPConn wraps a TCP connection to handle DNS message length prefixes
+type TCPConn struct {
+	conn net.Conn
+	addr net.Addr
+}
+
+func (tc *TCPConn) ReadFrom(buf []byte) (int, net.Addr, error) {
+	// Read 2-byte length prefix per RFC 1035
+	var lengthBytes [2]byte
+	_, err := io.ReadFull(tc.conn, lengthBytes[:])
+	if err != nil {
+		return 0, tc.addr, err
+	}
+	
+	length := binary.BigEndian.Uint16(lengthBytes[:])
+	if int(length) > len(buf) {
+		return 0, tc.addr, io.ErrShortBuffer
+	}
+	
+	// Read the DNS message
+	n, err := io.ReadFull(tc.conn, buf[:length])
+	return n, tc.addr, err
+}
+
+func (tc *TCPConn) WriteTo(buf []byte, addr net.Addr) (int, error) {
+	// Write 2-byte length prefix
+	lengthBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(lengthBytes, uint16(len(buf)))
+	
+	_, err := tc.conn.Write(lengthBytes)
+	if err != nil {
+		return 0, err
+	}
+	
+	// Write the DNS message
+	return tc.conn.Write(buf)
+}
+
+func (tc *TCPConn) Close() error {
+	return tc.conn.Close()
+}
+
+func (tc *TCPConn) LocalAddr() net.Addr {
+	return tc.conn.LocalAddr()
+}
+
+func (tc *TCPConn) SetDeadline(t time.Time) error {
+	return tc.conn.SetDeadline(t)
+}
+
+func (tc *TCPConn) SetReadDeadline(t time.Time) error {
+	return tc.conn.SetReadDeadline(t)
+}
+
+func (tc *TCPConn) SetWriteDeadline(t time.Time) error {
+	return tc.conn.SetWriteDeadline(t)
+}
+
+func handleTCPConnection(domain dns.Name, conn net.Conn, upstream string) {
+	defer conn.Close()
+	
+	tcpConn := &TCPConn{
+		conn: conn,
+		addr: conn.RemoteAddr(),
+	}
+	
+	// Use existing server logic with TCP wrapper
+	server(domain, tcpConn, upstream)
+}
+
+func tcpServer(domain dns.Name, listener net.Listener, upstream string) error {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+		
+		go handleTCPConnection(domain, conn, upstream)
+	}
+}
 
 // generateKeypair generates a private key and the corresponding public key. If
 // privkeyFilename and pubkeyFilename are respectively empty, it prints the
@@ -765,7 +851,7 @@ func computeMaxEncodedPayload(limit int) int {
 	return low
 }
 
-func run(privkey []byte, domain dns.Name, upstream string, dnsConn net.PacketConn) error {
+func server(domain dns.Name, dnsConn net.PacketConn, upstream string) error {
 	defer dnsConn.Close()
 
 	log.Printf("pubkey %x", noise.PubkeyFromPrivkey(privkey))
@@ -824,15 +910,18 @@ func main() {
 	var privkeyString string
 	var pubkeyFilename string
 	var udpAddr string
+	var tcpAddr string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
   %[1]s -gen-key -privkey-file PRIVKEYFILE -pubkey-file PUBKEYFILE
-  %[1]s -udp ADDR -privkey-file PRIVKEYFILE DOMAIN UPSTREAMADDR
+  %[1]s [-udp ADDR] [-tcp ADDR] -privkey-file PRIVKEYFILE DOMAIN UPSTREAMADDR
 
 Example:
   %[1]s -gen-key -privkey-file server.key -pubkey-file server.pub
   %[1]s -udp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
+  %[1]s -tcp :53 -privkey-file server.key t.example.com 127.0.0.1:8000
+  %[1]s -udp :53 -tcp :853 -privkey-file server.key t.example.com 127.0.0.1:8000
 
 `, os.Args[0])
 		flag.PrintDefaults()
@@ -842,14 +931,15 @@ Example:
 	flag.StringVar(&privkeyString, "privkey", "", fmt.Sprintf("server private key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&privkeyFilename, "privkey-file", "", "read server private key from file (with -gen-key, write to file)")
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "with -gen-key, write server public key to file")
-	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on (required)")
+	flag.StringVar(&udpAddr, "udp", "", "UDP address to listen on")
+	flag.StringVar(&tcpAddr, "tcp", "", "TCP address to listen on")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
 
 	if genKey {
 		// -gen-key mode.
-		if flag.NArg() != 0 || privkeyString != "" || udpAddr != "" {
+		if flag.NArg() != 0 || privkeyString != "" || udpAddr != "" || tcpAddr != "" {
 			flag.Usage()
 			os.Exit(1)
 		}
@@ -898,13 +988,8 @@ Example:
 			}
 		}
 
-		if udpAddr == "" {
-			fmt.Fprintf(os.Stderr, "the -udp option is required\n")
-			os.Exit(1)
-		}
-		dnsConn, err := net.ListenPacket("udp", udpAddr)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "opening UDP listener: %v\n", err)
+		if udpAddr == "" && tcpAddr == "" {
+			fmt.Fprintf(os.Stderr, "at least one of -udp or -tcp is required\n")
 			os.Exit(1)
 		}
 
@@ -943,9 +1028,43 @@ Example:
 			}
 		}
 
-		err = run(privkey, domain, upstream, dnsConn)
-		if err != nil {
-			log.Fatal(err)
+		var wg sync.WaitGroup
+
+		// Start UDP server if specified
+		if udpAddr != "" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				dnsConn, err := net.ListenPacket("udp", udpAddr)
+				if err != nil {
+					log.Fatalf("opening UDP listener: %v", err)
+				}
+				log.Printf("UDP server listening on %s", udpAddr)
+				err = server(domain, dnsConn, upstream)
+				if err != nil {
+					log.Printf("UDP server error: %v", err)
+				}
+			}()
 		}
+
+		// Start TCP server if specified
+		if tcpAddr != "" {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				listener, err := net.Listen("tcp", tcpAddr)
+				if err != nil {
+					log.Fatalf("opening TCP listener: %v", err)
+				}
+				defer listener.Close()
+				log.Printf("TCP server listening on %s", tcpAddr)
+				err = tcpServer(domain, listener, upstream)
+				if err != nil {
+					log.Printf("TCP server error: %v", err)
+				}
+			}()
+		}
+
+		wg.Wait()
 	}
 }
