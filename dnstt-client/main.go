@@ -242,16 +242,18 @@ func main() {
 	var dotAddr string
 	var pubkeyFilename string
 	var pubkeyString string
+	var tcpAddr string
 	var udpAddr string
 	var utlsDistribution string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
-  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+  %[1]s [-doh URL|-dot ADDR|-tcp ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
 
 Examples:
   %[1]s -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
   %[1]s -dot resolver.example:853 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+  %[1]s -tcp resolver.example:53 -pubkey-file server.pub t.example.com 127.0.0.1:7000
 
 `, os.Args[0])
 		flag.PrintDefaults()
@@ -281,6 +283,7 @@ Known TLS fingerprints for -utls are:
 	flag.StringVar(&dotAddr, "dot", "", "address of DoT resolver")
 	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
+	flag.StringVar(&tcpAddr, "tcp", "", "address of TCP DNS resolver")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
 	flag.StringVar(&utlsDistribution, "utls",
 		"4*random,3*Firefox_120,1*Firefox_105,3*Chrome_120,1*Chrome_102,1*iOS_14,1*iOS_13",
@@ -378,6 +381,19 @@ Known TLS fingerprints for -utls are:
 			pconn, err := NewTLSPacketConn(dotAddr, dialTLSContext)
 			return addr, pconn, err
 		}},
+		// -tcp
+		{tcpAddr, func(s string) (net.Addr, net.PacketConn, error) {
+			addr, err := net.ResolveTCPAddr("tcp", s)
+			if err != nil {
+				return nil, nil, err
+			}
+			conn, err := net.DialTCP("tcp", nil, addr)
+			if err != nil {
+				return nil, nil, err
+			}
+			pconn := NewTCPPacketConn(conn)
+			return addr, pconn, err
+		}},
 		// -udp
 		{udpAddr, func(s string) (net.Addr, net.PacketConn, error) {
 			addr, err := net.ResolveUDPAddr("udp", s)
@@ -392,7 +408,7 @@ Known TLS fingerprints for -utls are:
 			continue
 		}
 		if pconn != nil {
-			fmt.Fprintf(os.Stderr, "only one of -doh, -dot, and -udp may be given\n")
+			fmt.Fprintf(os.Stderr, "only one of -doh, -dot, -tcp, and -udp may be given\n")
 			os.Exit(1)
 		}
 		var err error
@@ -403,7 +419,7 @@ Known TLS fingerprints for -utls are:
 		}
 	}
 	if pconn == nil {
-		fmt.Fprintf(os.Stderr, "one of -doh, -dot, or -udp is required\n")
+		fmt.Fprintf(os.Stderr, "one of -doh, -dot, -tcp, or -udp is required\n")
 		os.Exit(1)
 	}
 

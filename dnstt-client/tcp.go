@@ -1,4 +1,4 @@
-package dnsttclient
+package main
 
 import (
     "io"
@@ -26,7 +26,8 @@ func (c *TCPPacketConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
     msgLen := int(length[0])<<8 | int(length[1])
     
     // Read the DNS message
-    return io.ReadFull(c.conn, b[:msgLen])
+    n, err = io.ReadFull(c.conn, b[:msgLen])
+    return n, c.conn.RemoteAddr(), err
 }
 
 // WriteTo writes a DNS message to the connection.
