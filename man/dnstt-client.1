@@ -13,7 +13,7 @@
 .Sh SYNOPSIS
 
 .Nm
-.Op Fl doh Ar URL | Fl dot Ar HOST : Ns Ar PORT | Fl udp Ar HOST : Ns Ar PORT
+.Op Fl doh Ar URL | Fl dot Ar HOST : Ns Ar PORT | Fl tcp Ar HOST : Ns Ar PORT | Fl udp Ar HOST : Ns Ar PORT
 .Op Fl pubkey Ar HEX | Fl pubkey-file Ar FILENAME
 .Ar DOMAIN
 .Ar LOCALADDR : Ns Ar LOCALPORT
@@ -35,12 +35,14 @@ running as the authoritative name server for
 The DNS messages may be carried over
 DNS over HTTPS,
 DNS over TLS,
+DNS over TCP,
 or classical DNS over UDP.
 
 .Pp
 You must use exactly one of the
 .Fl doh ,
 .Fl dot ,
+.Fl tcp ,
 or
 .Fl udp
 options,
@@ -74,6 +76,22 @@ is normally 853.
 See
 .Lk https://dnsprivacy.org/wiki/display/DP/DNS+Privacy+Public+Resolvers#DNSPrivacyPublicResolvers-DNS-over-TLS%28DoT%29
 for a list of public DNS over TLS resolvers.
+
+.It Fl tcp Ar HOST : Ns Ar PORT
+Use DNS over TCP.
+.Ar HOST
+and
+.Ar PORT
+are the TCP address of the DNS resolver.
+.Ar PORT
+is normally 53.
+
+With
+.Fl tcp ,
+you have the option of communicating directly with an instance of
+.Xr dnstt-server 1 ,
+without going through a recursive resolver,
+or you can connect to a standard DNS resolver that supports TCP.
 
 .It Fl udp Ar HOST : Ns Ar PORT
 Use DNS over UDP.
@@ -215,6 +233,21 @@ Use the given hex string as the server public key.
 dnstt-client -dot resolver.example:853 -pubkey 14ca15f53660e248d289d9302f992c4bee518f2361d6343dafa7b417b5a3d752 t.example.com 127.0.0.1:7000
 .Ed
 
+.Pp
+Tunnel through the DNS over TCP resolver at
+.Cm resolver.example:53
+to the authoritative name server for
+.Cm t.example.com .
+Listen locally at
+.Cm 127.0.0.1:7000
+for connections to forward through the tunnel.
+Use the server public key stored in the file
+.Cm server.pub .
+
+.Bd -literal -offset indent
+dnstt-client -tcp resolver.example:53 -pubkey-file server.pub t.example.com 127.0.0.1:7000
+.Ed
+
 
 .Sh DIAGNOSTICS
 
@@ -234,9 +267,11 @@ This number will vary depending on the length of
 .Sh SECURITY CONSIDERATIONS
 
 The
+.Fl tcp
+and
 .Fl udp
-option is not covert,
-and is intended for debugging and special configurations.
+options are not covert,
+and are intended for debugging and special configurations.
 Only the
 .Fl doh
 and
@@ -246,8 +281,10 @@ because they encrypt DNS messages between
 .Nm
 and the recursive resolver.
 The
+.Fl tcp
+and
 .Fl udp
-mode sends plaintext DNS messages,
+modes send plaintext DNS messages,
 which reveal the use of a DNS tunnel by their special format.
 
 Even with
