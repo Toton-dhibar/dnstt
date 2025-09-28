@@ -383,15 +383,8 @@ Known TLS fingerprints for -utls are:
 		}},
 		// -tcp
 		{tcpAddr, func(s string) (net.Addr, net.PacketConn, error) {
-			addr, err := net.ResolveTCPAddr("tcp", s)
-			if err != nil {
-				return nil, nil, err
-			}
-			conn, err := net.DialTCP("tcp", nil, addr)
-			if err != nil {
-				return nil, nil, err
-			}
-			pconn := NewTCPPacketConn(conn)
+			addr := turbotunnel.DummyAddr{}
+			pconn, err := NewTCPPacketConn(s)
 			return addr, pconn, err
 		}},
 		// -udp
