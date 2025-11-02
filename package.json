@@ -1,0 +1,21 @@
+{
+  "name": "netlify-v2ray-proxy",
+  "version": "1.0.0",
+  "description": "Netlify reverse proxy for V2Ray xhttp + TLS traffic",
+  "main": "functions/proxy.js",
+  "scripts": {
+    "test": "echo \"No tests configured\" && exit 0"
+  },
+  "keywords": [
+    "netlify",
+    "proxy",
+    "v2ray",
+    "reverse-proxy"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {}
+}
