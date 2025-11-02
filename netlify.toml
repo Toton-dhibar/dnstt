@@ -1,0 +1,19 @@
+[build]
+  functions = "functions"
+
+[[redirects]]
+  from = "/xhttp/*"
+  to = "/.netlify/functions/proxy/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS, HEAD, CONNECT"
+    Access-Control-Allow-Headers = "*"
+    Access-Control-Max-Age = "86400"
+
+[functions]
+  node_bundler = "esbuild"
